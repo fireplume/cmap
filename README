@@ -11,6 +11,27 @@ Performance:
 
 I used the included tests to compare performance with c++ std::map.
 
+Results:
+
+    For 500000 elements (both test compiled with -O2):
+
+    Initialization:
+    - create a key
+    - delete the key
+    - add back the key
+    - repeat for each element
+
+    Access:
+    - iterate over each element, checking corresponding value is not NULL
+
+    c++ std::map
+        [500000] Map init time: 1.05 seconds
+        [500000] Access time: 0.01 seconds
+
+    c tmap:
+        [500000] Map init time: 0.83 seconds
+        [500000] Access time:   0.21 seconds
+
 
 This has been working fine in the following environment:
 
