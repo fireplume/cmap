@@ -1,5 +1,5 @@
 # By convention in this project, all artefacts are put
-# under _MAKE_OUT environment variable or $(PWD)/out
+# under OUT_DIR environment variable or $(PWD)/out
 # if undefined.
 
 .PHONY: malloc
