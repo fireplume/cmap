@@ -36,7 +36,7 @@ myalloc(const size_t nbBytes) {
     #include <stdio.h>
     static int __flag = 0;
     if(!__flag) {
-        puts("Using custom allocator mymmap");
+        puts("Using custom allocator myalloc");
         __flag = 1;
     }
     #endif
