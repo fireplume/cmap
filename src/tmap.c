@@ -23,11 +23,9 @@ SOFTWARE.
 *********************************************************************************/
 
 #include <assert.h>
-#include <dlfcn.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/mman.h>
 
 #include "tmap.h"
 
@@ -42,6 +40,10 @@ SOFTWARE.
 #define PRINTD(...)
 #endif
 
+// In case client allocator uses mmap:
+#ifndef MAP_FAILED
+#define MAP_FAILED ((void*)-1)
+#endif
 
 /*************************** INTERNAL *********************************/
 // Internal functions, thou shall not use syncing primitives

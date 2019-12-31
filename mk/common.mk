@@ -1,3 +1,11 @@
+# Common to all makefiles in this project
+
+CC = clang
+LD = clang
+
+CCFLAGS += -Wall -O2
+LDFLAGS += -lc
+
 # Debug variant
 
 debug: CCFLAGS += -O0 -g -DQADEBUG

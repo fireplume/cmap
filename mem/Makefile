@@ -3,11 +3,11 @@ first: all
 .PHONY: clean
 
 
-CC = gcc
-LD = gcc
+# Common settings for all projects
+include $(MKFILES)/common.mk
 
 
-CCFLAGS += -O2 -D_GNU_SOURCE=1 -Iinclude -shared -fpic
+CCFLAGS += -Iinclude -shared -fpic
 LDFLAGS += -shared -fpic -lpthread -lrt
 
 
@@ -29,9 +29,3 @@ all: $(OUT_DIR) build
 
 clean:
 	rm -f $(OUT_DIR)/libmyalloc.so $(OBJECTS)
-
-
-# Variants
-
-# variants.mk: defines debug and malloc variants
-include $(MKFILES)/variants.mk

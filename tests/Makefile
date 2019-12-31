@@ -12,12 +12,12 @@ first: all
 .PHONY: clean
 
 
-CC = gcc
-LD = gcc
+# Common settings for all projects
+include $(MKFILES)/common.mk
 
 
-CCFLAGS += -O2 -I$(PROJECT_ROOT)/src/include -I$(PROJECT_ROOT)/mem -I. -fpie
-LDFLAGS += -L$(OUT_DIR) -ltmap -lpthread -ldl -Wl,-rpath=.:/usr/lib:/usr/local/lib
+CCFLAGS += -I$(PROJECT_ROOT)/src/include -I$(PROJECT_ROOT)/mem -I. -fpie
+LDFLAGS += -L$(OUT_DIR) -ltmap -lpthread -Wl,-rpath=.:/usr/lib:/usr/local/lib
 
 
 _OBJECTS = allocSample.o maptest.o multitaskMapTest.o
@@ -42,9 +42,6 @@ clean:
 	rm -f $(OUT_DIR)/maptest $(OBJECTS)
 
 # Variants
-
-# variants.mk: defines debug and gprof variants
-include $(MKFILES)/variants.mk
 
 # Using our own malloc implementation
 malloc: LDFLAGS += -L$(OUT_DIR) -lmyalloc
