@@ -310,16 +310,49 @@ void basicAccessorTest(const int mapMultiTaskSupport) {
 }
 
 
+void memleakTest(const int nbElements) {
+    tmap* map;
+    map = tinit(compare, TMAP_ALLOW_OVERWRITE, SINGLE_THREADED);
+
+    char** buf;
+    buf = (char**)malloc(nbElements*sizeof(char*)+MAX_KEY_SIZE*nbElements);
+    if(buf == NULL) {
+        fprintf(stderr, "memleakTest: Allocation failed: %s\n", strerror(errno));
+        exit(-1);
+    }
+
+    int baseOffset = nbElements*sizeof(char*);
+    for(int i=0; i<nbElements; i++) {
+        buf[i] = (char*)buf + baseOffset + i * MAX_KEY_SIZE;
+        snprintf(buf[i], MAX_KEY_SIZE, "%06d", i*2);
+    }
+
+    int cycle = 1;
+    while(1) {
+        printf("Cycle: %d Adding elements...\n", cycle);
+        for(int i=0; i<nbElements; i++) {
+            tadd(map, buf[i], buf[i]);
+        }
+        printf("Cycle: %d Deleting elements...\n", cycle);
+        for(int i=0; i<nbElements; i++) {
+            tdel(map, buf[i]);
+        }
+        cycle++;
+    }
+}
+
+
 void printHelp(char* argv[]) {
     printf("\
-Usage: %s [-h] [-t <b|o|p|mt|all>] [-e <nbElements>] [-p <parallel>] [-s] [-m] [-i <iterations>\n\
+Usage: %s [-h] [-t <b|o|p|pa|mt|a>] [-e <nbElements>] [-p <parallel>] [-s] [-i <iterations>\n\
     -t:\n\
         b:   basic map accessor test\n\
         o:   key/value overwrite test\n\
         p:   performance test\n\
+        pa:  performance test with client's memory allocator\n\
         mt:  multi threaded test\n\
-        mm:  custom memory allocator test\n\
-        all: run all tests\n\
+        ml:  memory leak test\n\
+        a:   run all tests except the infinite loop memory leak one\n\
     -e:\n\
         Performance test: total number of elements to create\n\
         Multi[thread|proc] test: number of elements to create == (int)nbElements/parallel\n\
@@ -327,15 +360,13 @@ Usage: %s [-h] [-t <b|o|p|mt|all>] [-e <nbElements>] [-p <parallel>] [-s] [-m] [
         Number of tasks (threads or processes) to create\n\
     -s:\n\
         Force multithreaded/multiprocess tests to run map with single thread support to cause errors\n\
-    -m:\n\
-        Run non multithreaded/multiprocess tests with multiprocess support (to test memory allocator)\n\
     -i:\n\
         Iterate 'iterations' number of times over the requested test(s)\n\
 \n\
 Note:\n\
 - You should run the perf test with %s -t p -e nbElements > /dev/null\n\
 -s: The test is still run in multithreaded fashion, but the map\n\
-    object is configured to work as in single threaded mode, which should cause errors.\n", argv[0], argv[0]);
+    object is configured to work as in single threaded mode, which should cause errors/crash.\n", argv[0], argv[0]);
 }
 
 
@@ -408,7 +439,7 @@ int main(int argc, char* argv[]) {
             mapPerformanceTest(nbElements, mapMultiTaskMode, 0);
         }
 
-        if(!strcmp(test, "p") || !strcmp(test, "a")) {
+        if(!strcmp(test, "pa") || !strcmp(test, "a")) {
             fprintf(stderr, "############## mapPerformanceTest ##############\n");
             fprintf(stderr, "############## +custom allocator  ##############\n");
             mapPerformanceTest(nbElements, mapMultiTaskMode, 1);
@@ -420,6 +451,20 @@ int main(int argc, char* argv[]) {
             printf("Elements/thread: %d\n", nbElPerThread);
             multithreadTest(nbParallelTasks, nbElPerThread, singleThreadedMode);
         }
+    }
+
+    if(!strcmp(test, "ml")) {
+        int nbElPerThread = nbElements/nbParallelTasks;
+        fprintf(stderr, "############## mem leak test ##############\n");
+        printf("Infinite loop adding/deleting: %d elements\n", nbElPerThread);
+        printf("Monitor the memory and make sure it remains stable\n");
+        printf("while running. <ctrl-c> to quit. Press <ENTER> to start.\n");
+        printf("Pick a number of elements >= 500000 (enforced)");
+        getchar();
+        if(nbElements<500000) {
+            nbElements = 500000;
+        }
+        memleakTest(nbElements);
     }
 
     return 0;

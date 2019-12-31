@@ -29,6 +29,9 @@ debug:
 
 
 malloc:
+	@echo ========== BUILDING mem ==========;
 	+$(MAKE) -C mem debug
+	@echo; echo ========== BUILDING src ==========;
 	+$(MAKE) -C src malloc
+	@echo; echo ========== BUILDING tests ==========;
 	+$(MAKE) -C tests malloc

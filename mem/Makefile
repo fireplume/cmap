@@ -8,7 +8,7 @@ include $(MKFILES)/common.mk
 
 
 CCFLAGS += -Iinclude -shared -fpic
-LDFLAGS += -shared -fpic -lpthread -lrt
+LDFLAGS += -shared -fpic -lpthread -lrt -Wl,-soname,libmyalloc.so
 
 
 OBJECTS = $(OUT_DIR)/myalloc.o

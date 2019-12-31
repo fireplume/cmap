@@ -62,22 +62,29 @@ typedef struct tallocator {
 } tallocator;
 
 
+typedef struct tnodeblock tnodeblock;
+
+
 // Internal node structure containing client's map data
 typedef struct tnode {
     void* key;
     void* value;
+    tnodeblock* __mynodeblock;
 } tnode;
 
 
 // Internal structure for memory management
-typedef struct tnodeblock tnodeblock;
 typedef struct tnodeblock {
     // Next block of nodes
     tnodeblock* __next;
+    // Previous block of nodes
+    tnodeblock* __previous;
     // Array of nodes available for client data allocation
     tnode* __nodes;
     // Index of next available node
     unsigned int __index;
+    // Number of live nodes
+    int __activeNodes;
 } tnodeblock;
 
 

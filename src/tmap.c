@@ -26,11 +26,12 @@ SOFTWARE.
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "tmap.h"
 
 #ifndef NODE_BLOCK_NB_ELEMENTS
-#define NODE_BLOCK_NB_ELEMENTS 32*1024
+#define NODE_BLOCK_NB_ELEMENTS 2*1024
 #endif
 
 
@@ -58,14 +59,17 @@ static void  (*__tmyfree)(void*, size_t) = NULL;
 #define MYALLOC(s) __tmyalloc(s)
 #define MYFREE(p,s) __tmyfree(p,s)
 
+#define EXTRA_BLOCK_ALLOCATION 1
+#define FIRST_BLOCK_ALLOCATION 0
+
+#define NODE_BLOCK_DELETED -1
+
 
 /**********************************************************************/
 // Syncing symbols for protecting map in multitasking context
 void __tSyncWait(tmap* map) __attribute__((always_inline));
 inline void __tSyncWait(tmap* map) {
-    if(map->__multitask == SINGLE_THREADED) {
-        return;
-    } else if(map->__multitask == MULTI_THREAD_SAFE) {
+    if(map->__multitask == MULTI_THREAD_SAFE) {
         pthread_mutex_lock(map->__mutex);
     }
 }
@@ -73,27 +77,53 @@ inline void __tSyncWait(tmap* map) {
 
 void __tSyncPost(tmap* map) __attribute__((always_inline));
 inline void __tSyncPost(tmap* map) {
-    if(map->__multitask == SINGLE_THREADED) {
-        return;
-    } else if(map->__multitask == MULTI_THREAD_SAFE) {
+    if(map->__multitask == MULTI_THREAD_SAFE) {
         pthread_mutex_unlock(map->__mutex);
     }
 }
 
 
-void* __nodeBlockAlloc(tmap* map) {
-    tnodeblock* nodeBlock = (tnodeblock*)MYALLOC(sizeof(tnodeblock));
-    nodeBlock->__nodes = (tnode*)MYALLOC(NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
-    nodeBlock->__index = 0;
-    nodeBlock->__next = NULL;
+void __nodeBlockAlloc(tmap* map) {
+    tnodeblock* oldNodeBlock = map->__currentNodeBlock;
 
-    return nodeBlock;
+    map->__currentNodeBlock = (tnodeblock*)MYALLOC(sizeof(tnodeblock));
+    map->__currentNodeBlock->__nodes = (tnode*)MYALLOC(NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
+    map->__currentNodeBlock->__index = 0;
+    map->__currentNodeBlock->__next = NULL;
+    map->__currentNodeBlock->__previous = oldNodeBlock;
+    map->__currentNodeBlock->__activeNodes = 0;
+
+    // Make old node block point to new block
+    if(oldNodeBlock != NULL) {
+        oldNodeBlock->__next = map->__currentNodeBlock;
+    }
 }
 
 
-void __tdel(tmap* map, void* key) __attribute__((always_inline));
-inline void __tdel(tmap* map, void* key) {
-    tdelete(&key, &map->__root, map->__cmp);
+void __nodeBlockRelease(tmap* map, tnodeblock* nodeBlock) {
+    if(map->__firstNodeBlock == nodeBlock) {
+        map->__firstNodeBlock = nodeBlock->__next;
+    }
+    if(map->__currentNodeBlock == nodeBlock) {
+        map->__currentNodeBlock = nodeBlock->__previous;
+    }
+
+    // Make previous block and next block around 'nodeBlock'
+    // point at each other
+    if(nodeBlock->__previous != NULL) {
+        nodeBlock->__previous->__next = nodeBlock->__next;
+    }
+    if(nodeBlock->__next != NULL) {
+        nodeBlock->__next->__previous = nodeBlock->__previous;
+    }
+    // Free memory
+    MYFREE(nodeBlock->__nodes, NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
+    MYFREE(nodeBlock, sizeof(tnodeblock));
+
+    if(map->__firstNodeBlock == NULL) {
+        __nodeBlockAlloc(map);
+        map->__firstNodeBlock = map->__currentNodeBlock;
+    }
 }
 
 
@@ -105,6 +135,28 @@ inline tnode* __tget(tmap* map, void* key) {
         return *pNode;
     }
     return NULL;
+}
+
+
+int __tdel(tmap* map, void* key) __attribute__((always_inline));
+inline int __tdel(tmap* map, void* key) {
+    tnode* pnode;
+
+    pnode = __tget(map, key);
+
+    if(pnode != NULL) {
+        tdelete(&key, &map->__root, map->__cmp);
+
+        pnode->__mynodeblock->__activeNodes--;
+
+        // Mark node as deleted by setting its key to 0
+        pnode->key = 0;
+        if(pnode->__mynodeblock->__activeNodes == 0 && pnode->__mynodeblock->__index >= NODE_BLOCK_NB_ELEMENTS) {
+            __nodeBlockRelease(map, pnode->__mynodeblock);
+            return NODE_BLOCK_DELETED;
+        }
+    }
+    return 0;
 }
 
 
@@ -155,10 +207,12 @@ tmap* tinit(int (*cmp)(const void*, const void*),
     map->__multitask = multitask;
     map->__cmp = cmp;
     map->__root = NULL;
+    map->__firstNodeBlock = NULL;
+    map->__currentNodeBlock = NULL;
     map->__noOverwrite = noOverwrite;
 
     // Allocate an initial node block
-    map->__currentNodeBlock = __nodeBlockAlloc(map);
+    __nodeBlockAlloc(map);
     // Remember first block for later memory release
     map->__firstNodeBlock = map->__currentNodeBlock;
 
@@ -203,16 +257,26 @@ void tdel(tmap* map, void* key) {
 void tfree(tmap* map) {
     tnodeblock* nodeBlock = map->__firstNodeBlock;
     tnodeblock* nextNodeBlock;
+    int blockStatus;
 
     while(nodeBlock != NULL) {
+        nextNodeBlock = nodeBlock->__next;
+
         // Remove nodes from bineary tree
         for(int node=0; node < nodeBlock->__index; node++) {
-            __tdel(map, nodeBlock->__nodes[node].key);
+            if(nodeBlock->__nodes[node].key == 0) {
+                continue;
+            }
+            blockStatus = __tdel(map, nodeBlock->__nodes[node].key);
+            if(blockStatus == NODE_BLOCK_DELETED) {
+                break;
+            }
         }
-        // Then release memory
-        MYFREE(nodeBlock->__nodes, NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
-        nextNodeBlock = nodeBlock->__next;
-        MYFREE(nodeBlock, sizeof(tnodeblock));
+
+        if(blockStatus != NODE_BLOCK_DELETED) {
+            MYFREE(nodeBlock->__nodes, NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
+            MYFREE(nodeBlock, sizeof(tnodeblock));
+        }
         nodeBlock = nextNodeBlock;
     }
 
@@ -245,8 +309,10 @@ void tadd(tmap* map, void* key, void* value) {
     // To simplify, ease reading, use map internal buf variable;
     // next available node:
     map->__pBufNode = &(map->__currentNodeBlock->__nodes[map->__currentNodeBlock->__index]);
+    map->__pBufNode->__mynodeblock = map->__currentNodeBlock;
     map->__pBufNode->key = key;
     map->__pBufNode->value = value;
+    map->__pBufNode->__mynodeblock->__activeNodes++;
 
     void* p = tsearch(map->__pBufNode, &map->__root, map->__cmp);
     assert(p);
@@ -256,14 +322,7 @@ void tadd(tmap* map, void* key, void* value) {
 
     if(map->__currentNodeBlock->__index >= NODE_BLOCK_NB_ELEMENTS) {
         // allocate a new node block
-        tnodeblock* nodeBlock = __nodeBlockAlloc(map);
-        assert(nodeBlock != NULL && nodeBlock != MAP_FAILED);
-
-        // Make current node block point to new block
-        map->__currentNodeBlock->__next = nodeBlock;
-
-        // Set current block to new one
-        map->__currentNodeBlock = nodeBlock;
+        __nodeBlockAlloc(map);
     }
 
     __tSyncPost(map);

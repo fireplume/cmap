@@ -4,7 +4,7 @@ CC = clang
 LD = clang
 
 CCFLAGS += -Wall -O2
-LDFLAGS += -lc
+LDFLAGS +=
 
 # Debug variant
 
