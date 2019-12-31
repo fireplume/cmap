@@ -21,10 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *********************************************************************************/
-
-
 /*
-
 As for the <search.h> implementation, you are responsible for managing the memory
 of given keys and values.
 
@@ -32,13 +29,23 @@ Whereas it doesn't matter this implementation as far as values go, if you releas
 memory for a key while it is being used, your program will likely crash or behave
 in unexpected ways.
 
+Note that internal structures' memory for a given map instance is only released
+after calling 'tfree'. This means that each time NODE_BLOCK_NB_ELEMENTS is added
+and then deleted, this amount of memory is held back:
+
+    "NODE_BLOCK_NB_ELEMENTS * sizeof(tnode) + sizeof(tnodeblock)"
+
+It also means that the first element added costs that same number of bytes.
+
+This is not very good and means you shouldn't re-use your map objects in order
+to be more memory efficient. When you're done with an instance, 'tfree' it and
+get a new one if needed.
 */
 
 #ifndef TMAP_H
 #define TMAP_H
 #include <search.h>
 #include <pthread.h>
-#include <semaphore.h>
 
 #define TMAP_NO_OVERWRITE 1
 #define TMAP_ALLOW_OVERWRITE 0

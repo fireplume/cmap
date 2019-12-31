@@ -106,29 +106,20 @@ inline tnode* __tget(tmap* map, void* key) {
 }
 
 
-void* __mmap(size_t s) {
-    return mmap(NULL,
-                s,
-                PROT_READ|PROT_WRITE,
-                MAP_SHARED|MAP_ANONYMOUS,
-                -1, 0);
-}
-
-
-void __munmap(void* ptr, size_t s) {
-    munmap(ptr, s);
-}
-
-
 void __free(void* ptr, size_t s) {
     free(ptr);
 }
 
 
+void* __malloc(size_t s) {
+    return malloc(s);
+}
+
+
 void __tallocator_init(tallocator* allocator, const int multitaskMode) {
     if(allocator == NULL) {
-        __tmyalloc = __mmap;
-        __tmyfree = __munmap;
+        __tmyalloc = __malloc;
+        __tmyfree = __free;
     } else {
         __tmyalloc = allocator->tmyalloc;
         __tmyfree = allocator->tmyfree;
