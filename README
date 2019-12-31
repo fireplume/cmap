@@ -13,7 +13,7 @@ I used the included tests to compare performance with c++ std::map.
 
 Results:
 
-    For 500000 elements (both test compiled with -O2):
+    For 500000 elements (both tests compiled with -O2, ran on Ryzen 1700X, VBox):
 
     Initialization:
     - create a key
@@ -28,9 +28,14 @@ Results:
         [500000] Map init time: 1.05 seconds
         [500000] Access time: 0.01 seconds
 
-    c tmap:
+    c tmap (default mmap allocator):
         [500000] Map init time: 0.83 seconds
         [500000] Access time:   0.21 seconds
+
+    c tmap (malloc, through allocator override, see 'tmap::tconf' and 'allocSample.c'):
+
+        [500000] Map init time: 0.75 seconds
+        [500000] Access time:   0.20 seconds
 
 
 This has been working fine in the following environment:

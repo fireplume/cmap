@@ -89,16 +89,16 @@ void* __nodeBlockAlloc(tmap* map) {
 }
 
 
-void __tdel(tmap* map, void* key) {
-    map->__bufNode.key = key;
-    tdelete(&(map->__bufNode), &map->__root, map->__cmp);
+void __tdel(tmap* map, void* key) __attribute__((always_inline));
+inline void __tdel(tmap* map, void* key) {
+    tdelete(&key, &map->__root, map->__cmp);
 }
 
 
-tnode* __tget(tmap* map, void* key) {
+tnode* __tget(tmap* map, void* key) __attribute__((always_inline));
+inline tnode* __tget(tmap* map, void* key) {
     tnode** pNode;
-    map->__bufNode.key = key;
-    pNode = tfind(&(map->__bufNode), &map->__root, map->__cmp);
+    pNode = tfind(&key, &map->__root, map->__cmp);
     if(pNode != NULL) {
         return *pNode;
     }

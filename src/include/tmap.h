@@ -82,7 +82,6 @@ typedef struct tmap {
     int (*__cmp)(const void*, const void*);
 
     // accelerator members: TODO: Keep? Any diff in performance?
-    tnode __bufNode;
     tnode* __pBufNode;
 
     // Overwrite permission flag
