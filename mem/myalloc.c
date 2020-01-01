@@ -139,31 +139,6 @@ void* getNewNode(size_t s) {
 }
 
 
-// This implementation sucks, I mean you have to release the memory manually!
-// Use this when you don't need previously allocated memory from your
-// data structures.
-void __unbrokeFree() {
-    #ifdef QADEBUG
-    fprintf(stderr, "MYALLOC: Released memory!\n");
-    #endif
-    sem_wait(&heap->sem);
-
-    // Release all memory
-    memnode_t* node = heap->firstDnode;
-    memnode_t* nextNode;
-    while(node != NULL) {
-        nextNode = node->nextNode;
-        munmap(node->addr, node->size);
-        node = nextNode;
-    }
-
-    heap->dnode = getNewNode(DNODE_SIZE);
-    heap->firstDnode = heap->dnode;
-
-    sem_post(&heap->sem);
-}
-
-
 // libmyalloc initialization
 static void __attribute__((constructor)) init();
 static void init() {
@@ -200,14 +175,26 @@ static void init() {
 // libmyalloc teardown, final cleanup and stats output
 static void __attribute__((destructor)) teardown();
 static void teardown() {
-    __unbrokeFree();
-
-    sem_destroy(&heap->sem);
-    munmap(heap, sizeof(heap_t));
-    heap = NULL;
-
     #ifdef QADEBUG
     fprintf(stderr, "MYALLOC: Shutdown!\n");
+    #endif
+    sem_wait(&heap->sem);
+
+    // Release all memory
+    memnode_t* node = heap->firstDnode;
+    memnode_t* nextNode;
+    while(node != NULL) {
+        nextNode = node->nextNode;
+        munmap(node->addr, node->size);
+        node = nextNode;
+    }
+
+    heap->dnode = getNewNode(DNODE_SIZE);
+    heap->firstDnode = heap->dnode;
+
+    sem_post(&heap->sem);
+
+    #ifdef QADEBUG
     fprintf(stderr, "\nmalloc override statistics:\n\n");
     fprintf(stderr, "  alloc:           %-7d calls\n", (allocCount-callocCount-reallocCount));
     fprintf(stderr, "  calloc:          %-7d calls\n", callocCount);
@@ -232,6 +219,9 @@ void* malloc(size_t size) {
         return NULL;
     }
 
+    // Round size to next multiple of 16bytes
+    size = (((size+15)>>4)<<4);
+
     sem_wait(&heap->sem);
 
     // Does it fit in current node?
@@ -253,6 +243,8 @@ void* malloc(size_t size) {
     heap->dnode->nextAlloc += size;
 
     sem_post(&heap->sem);
+
+    assert(((long long int)ptr & 0xF) == 0);
 
     #ifdef QADEBUG
     allocedMem += size;

@@ -305,7 +305,7 @@ void tadd(tmap* map, void* key, void* value) {
     map->__pBufNode = __tget(map, key);
 
     if(map->__noOverwrite && map->__pBufNode != NULL) {
-        fprintf(stderr, "SIGABRT: Key overwrite error: %s\n", (char*)key);
+        fprintf(stderr, "SIGABRT: Key overwrite error: key addr: %p\n", key);
         __tSyncPost(map);
         raise(SIGABRT);
     }
