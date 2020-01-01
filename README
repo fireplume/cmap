@@ -62,6 +62,11 @@ COMPILATION PARAMETERS
 
     You can override the following macros during compilation:
 
+    FAST_MAP
+
+        If defined, memory release will only be done for a given map when 'tfree' is
+        called, giving a =~ 25% speed performance improvement.
+
     NODE_BLOCK_NB_ELEMENTS
 
         Number of map elements pre allocated each time we run out of allocated memory.

@@ -85,7 +85,6 @@ void printMap(tmap* map) {
 
 /* For Key/value overwrite test and out of memory case*/
 jmp_buf jmpBuf;
-struct sigaction signalHandlerObj;
 void signalHandler(int signo) {
     puts("DEBUG: Caught signal");
     if(signo == SIGABRT) {
@@ -188,6 +187,7 @@ void overwriteTest(const int mapMultiTaskSupport) {
     map = tinit(compare, TMAP_NO_OVERWRITE, mapMultiTaskSupport);
 
     // setup signal handler
+    struct sigaction signalHandlerObj;
     signalHandlerObj.sa_handler = signalHandler;
     sigemptyset(&(signalHandlerObj.sa_mask));
     sigaddset(&(signalHandlerObj.sa_mask), SIGABRT);
@@ -428,7 +428,7 @@ int main(int argc, char* argv[]) {
             basicAccessorTest(mapMultiTaskMode);
         }
 
-        // Haven't taken the time to make the signal handler work more than once
+        // Signal handler works only the first time
         if((iterations == 1) && (!strcmp(test, "o") || !strcmp(test, "a"))) {
             fprintf(stderr, "############## overwriteTest ##############\n");
             overwriteTest(mapMultiTaskMode);

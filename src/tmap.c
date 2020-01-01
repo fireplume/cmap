@@ -59,6 +59,8 @@ static void  (*__tmyfree)(void*, size_t) = NULL;
 #define MYALLOC(s) __tmyalloc(s)
 #define MYFREE(p,s) __tmyfree(p,s)
 
+#define PTR_OFFSET(p,offset) (((char*)p)+offset)
+
 #define EXTRA_BLOCK_ALLOCATION 1
 #define FIRST_BLOCK_ALLOCATION 0
 
@@ -86,8 +88,8 @@ inline void __tSyncPost(tmap* map) {
 void __nodeBlockAlloc(tmap* map) {
     tnodeblock* oldNodeBlock = map->__currentNodeBlock;
 
-    map->__currentNodeBlock = (tnodeblock*)MYALLOC(sizeof(tnodeblock));
-    map->__currentNodeBlock->__nodes = (tnode*)MYALLOC(NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
+    map->__currentNodeBlock = (tnodeblock*)MYALLOC( sizeof(tnodeblock) + NODE_BLOCK_NB_ELEMENTS*sizeof(tnode) );
+    map->__currentNodeBlock->__nodes = (tnode*)PTR_OFFSET(map->__currentNodeBlock, sizeof(tnodeblock));
     map->__currentNodeBlock->__index = 0;
     map->__currentNodeBlock->__next = NULL;
     map->__currentNodeBlock->__previous = oldNodeBlock;
@@ -117,8 +119,7 @@ void __nodeBlockRelease(tmap* map, tnodeblock* nodeBlock) {
         nodeBlock->__next->__previous = nodeBlock->__previous;
     }
     // Free memory
-    MYFREE(nodeBlock->__nodes, NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
-    MYFREE(nodeBlock, sizeof(tnodeblock));
+    MYFREE(nodeBlock, sizeof(tnodeblock)+NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
 
     if(map->__firstNodeBlock == NULL) {
         __nodeBlockAlloc(map);
@@ -140,6 +141,12 @@ inline tnode* __tget(tmap* map, void* key) {
 
 int __tdel(tmap* map, void* key) __attribute__((always_inline));
 inline int __tdel(tmap* map, void* key) {
+#ifdef FAST_MAP
+    // When compiled with FAST_MAP, memory is released only
+    // when tfree is called, giving a =~ 25% init time performance
+    // increase.
+    tdelete(&key, &map->__root, map->__cmp);
+#else
     tnode* pnode;
 
     pnode = __tget(map, key);
@@ -156,6 +163,7 @@ inline int __tdel(tmap* map, void* key) {
             return NODE_BLOCK_DELETED;
         }
     }
+#endif
     return 0;
 }
 
@@ -258,12 +266,13 @@ void tfree(tmap* map) {
     tnodeblock* nodeBlock = map->__firstNodeBlock;
     tnodeblock* nextNodeBlock;
     int blockStatus;
+    register int node;
 
     while(nodeBlock != NULL) {
         nextNodeBlock = nodeBlock->__next;
 
         // Remove nodes from bineary tree
-        for(int node=0; node < nodeBlock->__index; node++) {
+        for(node=0; node < nodeBlock->__index; ++node) {
             if(nodeBlock->__nodes[node].key == 0) {
                 continue;
             }
@@ -274,8 +283,7 @@ void tfree(tmap* map) {
         }
 
         if(blockStatus != NODE_BLOCK_DELETED) {
-            MYFREE(nodeBlock->__nodes, NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
-            MYFREE(nodeBlock, sizeof(tnodeblock));
+            MYFREE(nodeBlock, sizeof(tnodeblock)+NODE_BLOCK_NB_ELEMENTS*sizeof(tnode));
         }
         nodeBlock = nextNodeBlock;
     }
@@ -312,13 +320,12 @@ void tadd(tmap* map, void* key, void* value) {
     map->__pBufNode->__mynodeblock = map->__currentNodeBlock;
     map->__pBufNode->key = key;
     map->__pBufNode->value = value;
-    map->__pBufNode->__mynodeblock->__activeNodes++;
+    ++map->__pBufNode->__mynodeblock->__activeNodes;
 
-    void* p = tsearch(map->__pBufNode, &map->__root, map->__cmp);
-    assert(p);
+    tsearch(map->__pBufNode, &map->__root, map->__cmp);
 
     // increment current node block node index
-    map->__currentNodeBlock->__index++;
+    ++map->__currentNodeBlock->__index;
 
     if(map->__currentNodeBlock->__index >= NODE_BLOCK_NB_ELEMENTS) {
         // allocate a new node block
@@ -336,7 +343,7 @@ void* tget(tmap* map, void* key) {
 
     v = map->__pBufNode = __tget(map, key);
 
-    if(map->__pBufNode != NULL) {
+    if(v != NULL) {
         v = map->__pBufNode->value;
     }
 
