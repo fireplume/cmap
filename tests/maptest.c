@@ -125,9 +125,8 @@ void mapPerformanceTest(const int nbElements,
 
     tmap* map = tinit(compare, TMAP_ALLOW_OVERWRITE, mapMultiTaskSupport);
 
-    // Allocating a big chunk and managing sub pointers manually as for
-    // big number of elements (>60000), we hit the system mappings limit
-    // and get ENOMEM (when compiled with MULTIPROC_SUPPORT)
+    // Allocating a big chunk and managing sub pointers manually to avoid
+    // hitting ENOMEM (too many mappings for process).
     char** buf;
     buf = (char**)malloc(nbElements*sizeof(char*)+MAX_KEY_SIZE*nbElements);
     if(buf == NULL) {

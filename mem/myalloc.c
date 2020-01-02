@@ -38,20 +38,6 @@ implementation.
 Memory never released until the end of the program to keep things
 simple, or unless client calls 'freeCheat'.
 
-
-
-############################################################################
-
-Do not trust this allocator other than for toying around.
-
-Running the following on my system with this allocator crashed the program:
-
-    maptest -t a -e 200000
-
-whereas with the system's malloc, it worked fine.
-
-############################################################################
-
 Scheme:
 
 We allocate blocks of memory through mmap from which we then dispense
@@ -60,6 +46,8 @@ chunks to clients.
 The motivation behind this implementation was to prove that I could get
 <search.h> binary tree implementation to work cross process which it
 kind of, but...
+
+valgrind happy insofar as memory leaks are concerned.
 
 */
 
