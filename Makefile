@@ -1,6 +1,14 @@
 # By convention in this project, all artefacts are put
-# under OUT_DIR environment variable or $(PWD)/out
-# if undefined.
+# under OUT_DIR environment variable
+#
+# You can build the project with the following:
+#
+#   make [clean|debug]
+# or
+# 	make target=[debug|grof]
+# or
+# 	make malloc  # malloc override
+# 	make mallocd # debug
 
 .PHONY: malloc
 
@@ -30,8 +38,16 @@ debug:
 
 malloc:
 	@echo ========== BUILDING mem ==========;
-	+$(MAKE) -C mem debug
+	+$(MAKE) -C mem build
 	@echo; echo ========== BUILDING src ==========;
 	+$(MAKE) -C src malloc
 	@echo; echo ========== BUILDING tests ==========;
 	+$(MAKE) -C tests malloc
+
+mallocd:
+	@echo ========== BUILDING mem ==========;
+	+$(MAKE) -C mem debug
+	@echo; echo ========== BUILDING src ==========;
+	+$(MAKE) -C src mallocd
+	@echo; echo ========== BUILDING tests ==========;
+	+$(MAKE) -C tests mallocd

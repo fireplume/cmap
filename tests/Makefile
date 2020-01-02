@@ -1,12 +1,3 @@
-# Memo to myself:
-# $<:	name of the first prerequisite
-# $@:	filename of the target of the rule
-#
-# _GNU_SOURCE: for gnu specifics like mremap, should avoid it though...
-
-# librt (RealTime): 	semaphore, shared memory, ...
-# libdl (DynLinker):	Dynamic linker (dlsym, dlopen,...)
-
 first: all
 
 .PHONY: clean
@@ -45,5 +36,8 @@ clean:
 
 # Using our own malloc implementation
 malloc: LDFLAGS += -L$(OUT_DIR) -lmyalloc
-malloc: CCFLAGS += -DMYALLOC
-malloc: clean debug
+malloc: clean build
+
+mallocd: LDFLAGS += -L$(OUT_DIR) -lmyalloc
+mallocd: clean debug
+

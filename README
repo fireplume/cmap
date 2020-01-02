@@ -61,11 +61,22 @@ This has been working fine in the following environment:
 COMPILATION PARAMETERS
 
     You can override the following macros during compilation:
+    (for example: FAST_MAP=1 make)
+
+    QADEBUG
+
+        If defined and using malloc override, statistics on malloc usage will be outputted
+        when libmyalloc.so is unloaded (program exits).
 
     FAST_MAP
 
         If defined, memory release will only be done for a given map when 'tfree' is
         called, giving a =~ 25% speed performance improvement.
+
+    FAST_ALLOC
+
+        If defined and using malloc override, memory won't be freed until the program
+        exits (or you've hogged all the memory!).
 
     NODE_BLOCK_NB_ELEMENTS
 

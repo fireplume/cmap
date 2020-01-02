@@ -10,6 +10,16 @@ include $(MKFILES)/common.mk
 CCFLAGS += -Iinclude -shared -fpic
 LDFLAGS += -shared -fpic -lpthread -lrt
 
+
+ifneq (${NODE_BLOCK_NB_ELEMENTS},)
+CCFLAGS += -DNODE_BLOCK_NB_ELEMENTS=${NODE_BLOCK_NB_ELEMENTS}
+endif
+
+ifeq (${FAST_MAP},1)
+CCFLAGS += -DFAST_MAP
+endif
+
+
 OBJECTS = $(OUT_DIR)/tmap.o
 
 
@@ -32,4 +42,7 @@ clean:
 
 # Using our own malloc implementation
 malloc: LDFLAGS += -L$(OUT_DIR) -lmyalloc
-malloc: clean debug
+malloc: clean build
+
+mallocd: LDFLAGS += -L$(OUT_DIR) -lmyalloc
+mallocd: clean debug

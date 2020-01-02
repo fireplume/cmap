@@ -11,6 +11,11 @@ CCFLAGS += -Iinclude -shared -fpic
 LDFLAGS += -shared -fpic -lpthread -lrt -Wl,-soname,libmyalloc.so
 
 
+ifeq (${FAST_ALLOC},1)
+CCFLAGS += -DFAST_ALLOC
+endif
+
+
 OBJECTS = $(OUT_DIR)/myalloc.o
 
 
@@ -19,7 +24,7 @@ OBJECTS = $(OUT_DIR)/myalloc.o
 $(OUT_DIR)/%.o: %.c
 	$(CC) -c $(CCFLAGS) $< -o $@
 
-build: $(OBJECTS)
+build: clean $(OBJECTS)
 	$(LD) $(OBJECTS) $(LDFLAGS) -o $(OUT_DIR)/libmyalloc.so
 
 $(OUT_DIR):
@@ -29,3 +34,4 @@ all: $(OUT_DIR) build
 
 clean:
 	rm -f $(OUT_DIR)/libmyalloc.so $(OBJECTS)
+
