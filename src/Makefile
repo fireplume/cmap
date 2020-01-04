@@ -7,8 +7,8 @@ first: all
 include $(MKFILES)/common.mk
 
 
-CCFLAGS += -Iinclude -shared -fpic
-LDFLAGS += -shared -fpic -lpthread -lrt
+CCFLAGS += -fpic
+LDFLAGS += -shared -fpic -lpthread
 
 
 ifneq (${NODE_BLOCK_NB_ELEMENTS},)
@@ -25,16 +25,14 @@ OBJECTS = $(OUT_DIR)/tmap.o
 
 # Recipes
 
+
 $(OUT_DIR)/%.o: %.c
 	$(CC) -c $(CCFLAGS) $< -o $@
+
 
 build: $(OBJECTS)
 	$(LD) $(OBJECTS) $(LDFLAGS) -o $(OUT_DIR)/libtmap.so
 
-$(OUT_DIR):
-	mkdir -p $(OUT_DIR)
-
-all: $(OUT_DIR) build
 
 clean:
 	rm -f $(OUT_DIR)/libtmap.so $(OBJECTS)

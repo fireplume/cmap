@@ -10,16 +10,29 @@
 # 	make malloc  # malloc override
 # 	make mallocd # debug
 
-.PHONY: malloc
+.PHONY: all clean debug malloc mallocd
 
-ifndef OUT_DIR
-$(error You need to source env.sh before compiling)
+
+NEEDED_VARS := OUT_DIR PROJECT_ROOT MKFILES
+UNSET_VARS=
+
+
+define check_if_set
+ifeq ($($(1)),)
+UNSET_VARS+=$(1)
+endif
+endef
+
+
+$(foreach v,$(NEEDED_VARS),$(eval $(call check_if_set,$(v))))
+
+ifneq ($(strip $(UNSET_VARS)),)
+$(error You need to source env.sh before compiling, following variables are not set: $(strip $(UNSET_VARS)))
 endif
 
-# These projects are not supported from the root folder:
-# arrays, demo, strmaps
 
 SUBPROJECTS = src mem tests
+
 
 all:
 	@+$(foreach p,$(SUBPROJECTS),echo; echo ========== BUILDING ${p} ==========; $(MAKE) -C $(p) $(target);)

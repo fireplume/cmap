@@ -29,20 +29,24 @@ SOFTWARE.
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h> /* sysconf(3) */
 
 
-#define NODE_SPACE_LEFT(node) ( node->size - ( (node->nextAlloc) - (node->addr) ) )
-#define ALLOCATE(ptr,node,size) \
-    do { \
-        ptr = (void*)node->nextAlloc; \
-        node->nextAlloc += size; \
-        node->inuse[(node->inUseIndex)++] = ptr; \
-        node->allocations++; \
-    } while(0)
+#include "linkedList.h"
 
-#define _MMAP(s) mmap(NULL, s, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0)
+
+#ifdef MEM_DEBUG
+#define PRINTV(...) do { fprintf(stderr, __VA_ARGS__); } while(0)
+#else
+#define PRINTV(...)
+#endif
+
+
+#define MEMNODE_T(o) ((memnode_t*)o)
+
+#define _MMAP(s) mmap(NULL, s, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
 #define atomic_add(ptr,value) __sync_fetch_and_add(ptr,value)
 // Process log2 of a power of 2 number, 'n', set value in 'ret'
 #define LOG2(n,ret) do { ret=0; while((1LL<<ret)<n) { ++ret; } } while(0)
@@ -63,41 +67,46 @@ static unsigned int allocedMem = 0;
 static unsigned int freedMem = 0;
 #endif
 
+// Terminology
+// Bucket:  Represents a memory size allocation category. For examples,
+//          all allocations smaller than 4Kb go into the 4Kb bucket.
+// Node:    When allocations are done, they are registered into a
+//          (memory) node which itself belongs to a bucket.
 
-// Be careful if tweaking those values. These were chosen so that the maximum overhead for managing
-// 4096 bytes is less than or equal to 4096 bytes.
 // This should be a power of 2.
-#define ALLOCATIONS_PER_NODE 128
+#define MAX_ALLOC_PER_NODE 128
 /*********************************************************************/
-// Following is initialized in number of system pages, will get set with byte values at run time.
-// Must be set in ascending order, except for the last element which must be -1 for
-// arbitrary size allocations.
-// -1 denotes any sizes greater than the prior size
-static int NODE_SIZES[] = {1, 4, 16, 64, -1};
-static const int NB_NODE_SIZES = sizeof(NODE_SIZES)/sizeof(int);
+// Following is initialized in number of system pages, will get set with
+// byte values at run time.
+// Must be set in ascending order, except for the last element which
+// must be 0 for arbitrary size allocations (but greater than the prior
+// size).
+static size_t BUCKET_SIZES[] = {1, 4, 16, 64, 0};
+static const unsigned int NB_BUCKETS = sizeof(BUCKET_SIZES)/sizeof(size_t);
 /*********************************************************************/
 
 
 typedef struct memnode_t memnode_t;
 typedef struct memnode_t {
+    // This must be the first member of the structure to make
+    // it LinkedList compatible.
+    LLNode node;
+
     // Block allocate address start. To simplify pointer math, using char*
     char* addr;
-
-    // Pointer to previous mapped block of memory, or NULL
-    memnode_t* previous;
-    memnode_t* next;
 
     // Offset of next available position within block
     char* nextAlloc;
 
-    // Size of block
+    // Size of block in bytes
     size_t size;
 
     // Allocated addresses
-    void* inuse[ALLOCATIONS_PER_NODE+1]; // [ALLOCATIONS_PER_NODE+1] shall always be zero
+    void* inuse[MAX_ALLOC_PER_NODE];
     unsigned short inUseIndex;
 
-    // If allocations == releases and NODE_SPACE_LEFT(memnode_t*) == 0, we can unmap the node
+    // If allocations == releases, no memory is used by the client
+    // for this node.
     unsigned allocations;
     unsigned releases;
 } memnode_t;
@@ -108,13 +117,14 @@ typedef struct heap_t {
     // (1) we could perhaps have one mutex per allocation size path?
     pthread_mutex_t mutex;
 
-    memnode_t* lastAllocNodes[NB_NODE_SIZES];
-    unsigned int nbAlloc[NB_NODE_SIZES];
+    LinkedList bucketNodes[NB_BUCKETS];
+    unsigned int bucketNbAlloc[NB_BUCKETS];
 
-    // Careful: would need their corresponding bucket mutex if going forward with (1).
+    // Careful if multi threading multiple allocation paths with those:
     unsigned bucketSel;
-
-    char* freeBuffer[ALLOCATIONS_PER_NODE];
+    memnode_t* bufNode;
+    size_t bufSize;
+    char* freeBuffer[MAX_ALLOC_PER_NODE];
     unsigned short freeBufferIndex;
 } heap_t;
 
@@ -122,10 +132,27 @@ typedef struct heap_t {
 // Our heap container
 static heap_t* heap = NULL;
 
+void malloc_dump();
+
+
+// Memory node linked list compare function. It is used
+// to sort the nodes in ascending order of start allocation
+// addresses.
+int __memnodeCompare(const void* a, const void* b) {
+    if( (MEMNODE_T(a))->addr > (MEMNODE_T(b))->addr ) {
+        return 1;
+    } else if( (MEMNODE_T(a))->addr < (MEMNODE_T(b))->addr ){
+        return -1;
+    }
+    return 0;
+}
+
 
 // libmyalloc initialization
 static void __attribute__((constructor)) init();
 static void init() {
+    fprintf(stderr, "Using custom malloc!\n");
+
     // Initialize heap
     heap = _MMAP(sizeof(heap_t));
     assert(heap != MAP_FAILED);
@@ -133,26 +160,26 @@ static void init() {
     PAGE_SIZE = sysconf(_SC_PAGESIZE);
     LOG2(PAGE_SIZE, LOG2_PAGE_SIZE);
 
-    for(int i=0; i<sizeof(NODE_SIZES)/sizeof(int); i++){
-        NODE_SIZES[i] <<= LOG2_PAGE_SIZE;
+    for(int i=0; i<sizeof(BUCKET_SIZES)/sizeof(size_t); i++){
+        BUCKET_SIZES[i] <<= LOG2_PAGE_SIZE;
     }
 
     // calculate minimum allocation size and its log2
-    int buf = 0;
+    unsigned int buf = 0;
 
-    // Get log2(ALLOCATIONS_PER_NODE)
-    LOG2(ALLOCATIONS_PER_NODE, buf);
+    // Get log2(MAX_ALLOC_PER_NODE)
+    LOG2(MAX_ALLOC_PER_NODE, buf);
 
     // Set min alloc size
-    MIN_ALLOC_SIZE = NODE_SIZES[0] >> buf;
+    MIN_ALLOC_SIZE = BUCKET_SIZES[0] >> buf;
 
     // Calculate log2 of minimum allocation size
     LOG2(MIN_ALLOC_SIZE, LOG2_MIN_ALLOC_SIZE);
 
     pthread_mutex_init(&heap->mutex, NULL);
 
-    for(int i=0; i<NB_NODE_SIZES; i++) {
-        heap->lastAllocNodes[i] = NULL;
+    for(int i=0; i<NB_BUCKETS; i++) {
+        ll_init(&(heap->bucketNodes[i]), __memnodeCompare);
     }
 }
 
@@ -160,18 +187,11 @@ static void init() {
 // libmyalloc teardown, final cleanup and stats output
 static void __attribute__((destructor)) teardown();
 static void teardown() {
-    #ifdef QADEBUG
-    fprintf(stderr, "MYALLOC: Shutdown!\n");
-    #endif
-    pthread_mutex_lock(&heap->mutex);
-
-    // Release all memory
-    // Is it needed at this point? What if the lib remains opened?
-
-    pthread_mutex_unlock(&heap->mutex);
+    // Remaining unfreed memory will be reclaimed by the OS
 
     #ifdef QADEBUG
-    fprintf(stderr, "\nmalloc override statistics:\n\n");
+    fprintf(stderr, "MYALLOC: Shutdown!\n\n");
+    fprintf(stderr, "malloc override statistics:\n\n");
     fprintf(stderr, "  alloc:           %-7d calls\n", (allocCount-callocCount-reallocCount));
     fprintf(stderr, "  calloc:          %-7d calls\n", callocCount);
     fprintf(stderr, "  free:            %-7d calls\n", freeCount);
@@ -180,51 +200,58 @@ static void teardown() {
     fprintf(stderr, "  freed:           %-7d KB\n", freedMem/1024);
     fprintf(stderr, "\nAllocations by memory buckets\n\n");
     int i;
-    for(i=0;i<NB_NODE_SIZES-1;i++) {
-        fprintf(stderr, "   %-6d KB: %d\n", NODE_SIZES[i]>>10, heap->nbAlloc[i]);
+    for(i=0;i<NB_BUCKETS-1;i++) {
+        fprintf(stderr, "   %-6zu KB: %d\n", BUCKET_SIZES[i]>>10, heap->bucketNbAlloc[i]);
     }
-    fprintf(stderr, "  >%-6d KB: %d\n", NODE_SIZES[i-1]>>10, heap->nbAlloc[i]);
+    fprintf(stderr, "  >%-6zu KB: %d\n", BUCKET_SIZES[i-1]>>10, heap->bucketNbAlloc[i]);
     #endif
 }
 
 
+size_t NODE_SPACE_LEFT(LLNode* node) __attribute__((always_inline));
+inline size_t NODE_SPACE_LEFT(LLNode* node) {
+    return ( MEMNODE_T(node)->size - ( (MEMNODE_T(node)->nextAlloc) - (MEMNODE_T(node)->addr) ) );
+}
+
+
+void ALLOCATE(void** ptr, LLNode* node, size_t size) __attribute__((always_inline));
+inline void ALLOCATE(void** ptr, LLNode* node, size_t size) {
+    (*ptr) = (void*)(MEMNODE_T(node))->nextAlloc;
+    MEMNODE_T(node)->nextAlloc += size;
+    MEMNODE_T(node)->inuse[(MEMNODE_T(node)->inUseIndex)++] = (*ptr);
+    MEMNODE_T(node)->allocations++;
+}
+
+
 // Map a new block of memory
-void* getNewNode(memnode_t* lastNode, const int bucketSel, const int size) {
-    size_t nodeSize;
-    if(bucketSel < NB_NODE_SIZES-1) {
-        nodeSize = NODE_SIZES[bucketSel];
-    } else {
-        nodeSize = size;
+void* getNewNode(const int size) {
+    heap->bufSize = BUCKET_SIZES[heap->bucketSel];
+    if(heap->bufSize == 0) {
+        heap->bufSize = size;
     }
 
-    memnode_t* node = (memnode_t*) _MMAP(sizeof(memnode_t) + nodeSize);
-    if(node == MAP_FAILED) {
+    heap->bufNode = (memnode_t*) _MMAP(sizeof(memnode_t) + heap->bufSize);
+    PRINTV("+MEM: Mapped node: %p\n", heap->bufNode);
+    if(heap->bufNode == MAP_FAILED) {
         return MAP_FAILED;
     }
 
     // First address available for client is at offset sizeof(memnode_t)
-    node->addr = (char*)node + sizeof(memnode_t);
-    node->previous = lastNode;
-    if(lastNode != NULL) {
-        lastNode->next = node;
-    }
-    node->next = NULL;
-    node->nextAlloc = node->addr;
-    node->size = nodeSize;
+    heap->bufNode->addr = (char*)(heap->bufNode) + sizeof(memnode_t);
+    heap->bufNode->nextAlloc = heap->bufNode->addr;
+    heap->bufNode->size = heap->bufSize;
     // other members set at 0 by mmap
 
-    return node;
+    ll_insert(&heap->bucketNodes[heap->bucketSel], (LLNode*)heap->bufNode);
+
+    // If sorted, 'tail' is not necessarily 'last_insert'
+    return heap->bucketNodes[heap->bucketSel].last_insert;
 }
 
 
 void* malloc(size_t size) {
     #ifdef QADEBUG
     atomic_add(&allocCount,1);
-    static int __flag = 0;
-    if(!__flag) {
-        __flag = 1;
-        puts("Using custom malloc!");
-    }
     #endif
 
     if(size == 0) {
@@ -240,38 +267,38 @@ void* malloc(size_t size) {
     LOG2(size, heap->bucketSel);
 
     // We subtract LOG2_MIN_ALLOC_SIZE because our node allocation unit size starts at
-    // MIN_ALLOC_SIZE, which corresponds to index 0 of heap->lastAllocNodes
+    // MIN_ALLOC_SIZE, which corresponds to index 0 of heap->bucketNodes
     heap->bucketSel -= LOG2_MIN_ALLOC_SIZE;
 
-    // Cap block selector to ALLOCATION_RANGES - 1
-    if(heap->bucketSel >= NB_NODE_SIZES) {
-        heap->bucketSel = NB_NODE_SIZES - 1;
+    // Cap bucketSel to ALLOCATION_RANGES - 1
+    if(heap->bucketSel >= NB_BUCKETS) {
+        heap->bucketSel = NB_BUCKETS - 1;
     }
 
-    // Does the node exist?
-    if(heap->lastAllocNodes[heap->bucketSel] == NULL) {
-        heap->lastAllocNodes[heap->bucketSel] = getNewNode(NULL, heap->bucketSel, size);
+    // Is the bucket empty?
+    if(heap->bucketNodes[heap->bucketSel].last_insert == NULL) {
+        if(getNewNode(size) == MAP_FAILED) {
+            pthread_mutex_unlock(&heap->mutex);
+            return NULL;
+        }
     }
 
     // Does it fit in last node?
-    if(size > NODE_SPACE_LEFT(heap->lastAllocNodes[heap->bucketSel])) {
-        heap->lastAllocNodes[heap->bucketSel] = getNewNode(heap->lastAllocNodes[heap->bucketSel],
-                                                           heap->bucketSel,
-                                                           size);
-
-        if(heap->lastAllocNodes[heap->bucketSel] == MAP_FAILED) {
+    if(size > NODE_SPACE_LEFT(heap->bucketNodes[heap->bucketSel].last_insert)) {
+        if(getNewNode(size) == MAP_FAILED) {
+            pthread_mutex_unlock(&heap->mutex);
             return NULL;
         }
     }
 
     void* ptr;
-    ALLOCATE(ptr, heap->lastAllocNodes[heap->bucketSel], size);
+    ALLOCATE(&ptr, heap->bucketNodes[heap->bucketSel].last_insert, size);
 
     pthread_mutex_unlock(&heap->mutex);
 
     #ifdef QADEBUG
     allocedMem += size;
-    heap->nbAlloc[heap->bucketSel]++;
+    heap->bucketNbAlloc[heap->bucketSel]++;
     #endif
 
     return ptr;
@@ -292,9 +319,8 @@ void free(void* ptr) {
 #ifndef FAST_ALLOC
     pthread_mutex_lock(&heap->mutex);
 
-    // check if in a node first?
-
-    if(heap->freeBufferIndex < ALLOCATIONS_PER_NODE-1) {
+    // Buffer free pointers until ready to clean up
+    if(heap->freeBufferIndex < MAX_ALLOC_PER_NODE-1) {
         heap->freeBuffer[heap->freeBufferIndex++] = ptr;
         pthread_mutex_unlock(&heap->mutex);
         return;
@@ -302,38 +328,37 @@ void free(void* ptr) {
     heap->freeBuffer[heap->freeBufferIndex] = ptr;
 
     // sort freed pointers
-    register int i;
     register int j;
-    register void* tmp;
-    for(int i=0; i<ALLOCATIONS_PER_NODE; i++) {
-        for(j=i+1; j<ALLOCATIONS_PER_NODE; j++) {
-            if(heap->freeBuffer[j] < heap->freeBuffer[i]) {
-                tmp = heap->freeBuffer[j];
-                heap->freeBuffer[j] = heap->freeBuffer[i];
-                heap->freeBuffer[i] = tmp;
+    {
+        register void* tmp;
+        register int i;
+        for(i=0; i<MAX_ALLOC_PER_NODE; i++) {
+            for(j=i+1; j<MAX_ALLOC_PER_NODE; j++) {
+                if(heap->freeBuffer[j] < heap->freeBuffer[i]) {
+                    tmp = heap->freeBuffer[j];
+                    heap->freeBuffer[j] = heap->freeBuffer[i];
+                    heap->freeBuffer[i] = tmp;
+                }
             }
         }
     }
 
     // bulk process freed pointers
     register memnode_t* node;
-    register memnode_t* tmpnode;
     register int k;
     heap->freeBufferIndex = 0;
 
-    for(i=0; i<NB_NODE_SIZES; i++) {
-        node = heap->lastAllocNodes[i];
-        while(node != NULL) {
-            if(heap->freeBuffer[0] > node->nextAlloc || heap->freeBuffer[ALLOCATIONS_PER_NODE-1] < node->addr) {
-                node = node->previous;
-                continue;
-            }
-
-            // We know ptr is in range, but not necessarily valid
-            for(j=0;j < node->inUseIndex; j++) {
-                for(k=0; k<ALLOCATIONS_PER_NODE; k++) {
+    for(heap->bucketSel=0; heap->bucketSel<NB_BUCKETS; heap->bucketSel++) {
+        ll_reset_iterator(&heap->bucketNodes[heap->bucketSel]);
+        while( ( node = (memnode_t*)ll_iter(&heap->bucketNodes[heap->bucketSel]) ) != NULL ) {
+            for(k=0; k<MAX_ALLOC_PER_NODE; k++) {
+                if(heap->freeBuffer[k] >= node->nextAlloc || heap->freeBuffer[k] < node->addr) {
+                    continue;
+                }
+                for(j=0;j < node->inUseIndex; j++) {
                     if(heap->freeBuffer[k] == node->inuse[j]) {
                         node->inuse[j] = NULL;
+                        heap->freeBuffer[k] = (void*)-1LL;
                         node->releases++;
                         heap->freeBufferIndex++;
                         break;
@@ -341,37 +366,34 @@ void free(void* ptr) {
                 }
             }
 
-            // If half or more of the node is used and freed, unmap it
-            if(!NODE_SPACE_LEFT(node) && (node->releases == node->allocations) ) {
+            // Should we release even if node not completely full?
+            if(!NODE_SPACE_LEFT((LLNode*)node) && (node->releases == node->allocations) ) {
                 #ifdef QADEBUG
                 atomic_add(&freedMem, (node->nextAlloc - node->addr));
                 #endif
 
-                if(heap->lastAllocNodes[i] == node) {
-                    heap->lastAllocNodes[i] = node->previous;
-                }
+                ll_del(&heap->bucketNodes[heap->bucketSel], (LLNode*)node);
 
-                if(node->previous != NULL) {
-                    node->previous->next = node->next;
-                }
-                if(node->next != NULL) {
-                    node->next->previous= node->previous;
-                }
-
-                tmpnode = node;
-                node = node->previous;
-                munmap(tmpnode, tmpnode->size);
-            } else {
-                node = node->previous;
+                PRINTV("-MEM: munmap node: %p\n", node);
+                munmap(node, (node->size+sizeof(memnode_t)));
             }
 
-            if(heap->freeBufferIndex == ALLOCATIONS_PER_NODE) {
+            if(heap->freeBufferIndex == MAX_ALLOC_PER_NODE) {
                 heap->freeBufferIndex = 0;
                 pthread_mutex_unlock(&heap->mutex);
                 return;
             }
         }
     }
+
+#ifdef QADEBUG
+    for(int i=0; i<MAX_ALLOC_PER_NODE; i++) {
+        if(heap->freeBuffer[i] != (void*)-1LL) {
+            fprintf(stderr, "ERROR: NOT FREED: %p\n", heap->freeBuffer[i]);
+        }
+    }
+#endif
+
 
     // Some of the pointers attempted to be freed were duds
     heap->freeBufferIndex = 0;
@@ -385,7 +407,11 @@ void *calloc(size_t nmemb, size_t size) {
     #ifdef QADEBUG
     atomic_add(&callocCount,1);
     #endif
-    return malloc(nmemb*size);
+    void* ptr = malloc(nmemb*size);
+    if(ptr != NULL) {
+        memset(ptr, 0, nmemb*size);
+    }
+    return ptr;
 }
 
 
@@ -406,3 +432,6 @@ void *realloc(void *ptr, size_t size) {
 
     return ptr;
 }
+
+
+
