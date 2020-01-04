@@ -113,6 +113,9 @@ typedef struct heap_t {
 
     // Careful: would need their corresponding bucket mutex if going forward with (1).
     unsigned bucketSel;
+
+    char* freeBuffer[ALLOCATIONS_PER_NODE];
+    unsigned short freeBufferIndex;
 } heap_t;
 
 
@@ -276,6 +279,10 @@ void* malloc(size_t size) {
 
 
 void free(void* ptr) {
+	if(ptr == NULL || ptr == MAP_FAILED) {
+		return;
+	}
+
     #ifdef QADEBUG
     atomic_add(&freeCount,1);
     #endif
@@ -285,42 +292,89 @@ void free(void* ptr) {
 #ifndef FAST_ALLOC
     pthread_mutex_lock(&heap->mutex);
 
-    // find ptr
+    // check if in a node first?
+
+    if(heap->freeBufferIndex < ALLOCATIONS_PER_NODE-1) {
+    	heap->freeBuffer[heap->freeBufferIndex++] = ptr;
+    	pthread_mutex_unlock(&heap->mutex);
+    	return;
+    }
+    heap->freeBuffer[heap->freeBufferIndex] = ptr;
+
+    // sort freed pointers
+    register int i;
+	register int j;
+    register void* tmp;
+    for(int i=0; i<ALLOCATIONS_PER_NODE; i++) {
+    	for(j=i+1; j<ALLOCATIONS_PER_NODE; j++) {
+    		if(heap->freeBuffer[j] < heap->freeBuffer[i]) {
+    			tmp = heap->freeBuffer[j];
+    			heap->freeBuffer[j] = heap->freeBuffer[i];
+    			heap->freeBuffer[i] = tmp;
+    		}
+    	}
+    }
+
+    // bulk process freed pointers
     register memnode_t* node;
-    register int j;
-    for(int i=0; i<NB_NODE_SIZES; i++) {
+    register memnode_t* tmpnode;
+    register int k;
+    heap->freeBufferIndex = 0;
+
+    for(i=0; i<NB_NODE_SIZES; i++) {
         node = heap->lastAllocNodes[i];
         while(node != NULL) {
+        	if(heap->freeBuffer[0] > node->nextAlloc || heap->freeBuffer[ALLOCATIONS_PER_NODE-1] < node->addr) {
+        		node = node->previous;
+        		continue;
+        	}
+
+        	// We know ptr is in range, but not necessarily valid
             for(j=0;j < node->inUseIndex; j++) {
-                if(ptr == node->inuse[j]) {
-                    node->inuse[j] = (char*)-1;
-                    node->releases++;
-                    if(!NODE_SPACE_LEFT(node) && (node->releases == node->allocations) ) {
-                        #ifdef QADEBUG
-                        atomic_add(&freedMem,node->size);
-                        #endif
-
-                        if(heap->lastAllocNodes[i] == node) {
-                            heap->lastAllocNodes[i] = node->previous;
-                        }
-
-                        if(node->previous != NULL) {
-                            node->previous->next = node->next;
-                        }
-                        if(node->next!= NULL) {
-                            node->next->previous= node->previous;
-                        }
-
-                        munmap(node, node->size);
-                    }
-                    pthread_mutex_unlock(&heap->mutex);
-                    return;
-                }
+            	for(k=0; k<ALLOCATIONS_PER_NODE; k++) {
+					if(heap->freeBuffer[k] == node->inuse[j]) {
+						node->inuse[j] = NULL;
+						node->releases++;
+						heap->freeBufferIndex++;
+						break;
+					}
+            	}
             }
-            node = node->previous;
+
+        	// If half or more of the node is used and freed, unmap it
+			if(!NODE_SPACE_LEFT(node) && (node->releases == node->allocations) ) {
+				#ifdef QADEBUG
+				atomic_add(&freedMem, (node->nextAlloc - node->addr));
+				#endif
+
+				if(heap->lastAllocNodes[i] == node) {
+					heap->lastAllocNodes[i] = node->previous;
+				}
+
+				if(node->previous != NULL) {
+					node->previous->next = node->next;
+				}
+				if(node->next != NULL) {
+					node->next->previous= node->previous;
+				}
+
+				tmpnode = node;
+				node = node->previous;
+				munmap(tmpnode, tmpnode->size);
+			} else {
+				node = node->previous;
+			}
+
+			if(heap->freeBufferIndex == ALLOCATIONS_PER_NODE) {
+            	heap->freeBufferIndex = 0;
+                pthread_mutex_unlock(&heap->mutex);
+                return;
+            }
         }
     }
 
+    // Some of the pointers attempted to be freed were duds
+    heap->freeBufferIndex = 0;
     pthread_mutex_unlock(&heap->mutex);
 
 #endif
