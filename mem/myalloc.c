@@ -279,9 +279,9 @@ void* malloc(size_t size) {
 
 
 void free(void* ptr) {
-	if(ptr == NULL || ptr == MAP_FAILED) {
-		return;
-	}
+    if(ptr == NULL || ptr == MAP_FAILED) {
+        return;
+    }
 
     #ifdef QADEBUG
     atomic_add(&freeCount,1);
@@ -295,24 +295,24 @@ void free(void* ptr) {
     // check if in a node first?
 
     if(heap->freeBufferIndex < ALLOCATIONS_PER_NODE-1) {
-    	heap->freeBuffer[heap->freeBufferIndex++] = ptr;
-    	pthread_mutex_unlock(&heap->mutex);
-    	return;
+        heap->freeBuffer[heap->freeBufferIndex++] = ptr;
+        pthread_mutex_unlock(&heap->mutex);
+        return;
     }
     heap->freeBuffer[heap->freeBufferIndex] = ptr;
 
     // sort freed pointers
     register int i;
-	register int j;
+    register int j;
     register void* tmp;
     for(int i=0; i<ALLOCATIONS_PER_NODE; i++) {
-    	for(j=i+1; j<ALLOCATIONS_PER_NODE; j++) {
-    		if(heap->freeBuffer[j] < heap->freeBuffer[i]) {
-    			tmp = heap->freeBuffer[j];
-    			heap->freeBuffer[j] = heap->freeBuffer[i];
-    			heap->freeBuffer[i] = tmp;
-    		}
-    	}
+        for(j=i+1; j<ALLOCATIONS_PER_NODE; j++) {
+            if(heap->freeBuffer[j] < heap->freeBuffer[i]) {
+                tmp = heap->freeBuffer[j];
+                heap->freeBuffer[j] = heap->freeBuffer[i];
+                heap->freeBuffer[i] = tmp;
+            }
+        }
     }
 
     // bulk process freed pointers
@@ -324,49 +324,49 @@ void free(void* ptr) {
     for(i=0; i<NB_NODE_SIZES; i++) {
         node = heap->lastAllocNodes[i];
         while(node != NULL) {
-        	if(heap->freeBuffer[0] > node->nextAlloc || heap->freeBuffer[ALLOCATIONS_PER_NODE-1] < node->addr) {
-        		node = node->previous;
-        		continue;
-        	}
-
-        	// We know ptr is in range, but not necessarily valid
-            for(j=0;j < node->inUseIndex; j++) {
-            	for(k=0; k<ALLOCATIONS_PER_NODE; k++) {
-					if(heap->freeBuffer[k] == node->inuse[j]) {
-						node->inuse[j] = NULL;
-						node->releases++;
-						heap->freeBufferIndex++;
-						break;
-					}
-            	}
+            if(heap->freeBuffer[0] > node->nextAlloc || heap->freeBuffer[ALLOCATIONS_PER_NODE-1] < node->addr) {
+                node = node->previous;
+                continue;
             }
 
-        	// If half or more of the node is used and freed, unmap it
-			if(!NODE_SPACE_LEFT(node) && (node->releases == node->allocations) ) {
-				#ifdef QADEBUG
-				atomic_add(&freedMem, (node->nextAlloc - node->addr));
-				#endif
+            // We know ptr is in range, but not necessarily valid
+            for(j=0;j < node->inUseIndex; j++) {
+                for(k=0; k<ALLOCATIONS_PER_NODE; k++) {
+                    if(heap->freeBuffer[k] == node->inuse[j]) {
+                        node->inuse[j] = NULL;
+                        node->releases++;
+                        heap->freeBufferIndex++;
+                        break;
+                    }
+                }
+            }
 
-				if(heap->lastAllocNodes[i] == node) {
-					heap->lastAllocNodes[i] = node->previous;
-				}
+            // If half or more of the node is used and freed, unmap it
+            if(!NODE_SPACE_LEFT(node) && (node->releases == node->allocations) ) {
+                #ifdef QADEBUG
+                atomic_add(&freedMem, (node->nextAlloc - node->addr));
+                #endif
 
-				if(node->previous != NULL) {
-					node->previous->next = node->next;
-				}
-				if(node->next != NULL) {
-					node->next->previous= node->previous;
-				}
+                if(heap->lastAllocNodes[i] == node) {
+                    heap->lastAllocNodes[i] = node->previous;
+                }
 
-				tmpnode = node;
-				node = node->previous;
-				munmap(tmpnode, tmpnode->size);
-			} else {
-				node = node->previous;
-			}
+                if(node->previous != NULL) {
+                    node->previous->next = node->next;
+                }
+                if(node->next != NULL) {
+                    node->next->previous= node->previous;
+                }
 
-			if(heap->freeBufferIndex == ALLOCATIONS_PER_NODE) {
-            	heap->freeBufferIndex = 0;
+                tmpnode = node;
+                node = node->previous;
+                munmap(tmpnode, tmpnode->size);
+            } else {
+                node = node->previous;
+            }
+
+            if(heap->freeBufferIndex == ALLOCATIONS_PER_NODE) {
+                heap->freeBufferIndex = 0;
                 pthread_mutex_unlock(&heap->mutex);
                 return;
             }
