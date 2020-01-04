@@ -1,7 +1,6 @@
 Fast, thread safe map implementation with a few tests and examples.
 
-I've also included a poorly implemented malloc override... Harder than I thought,
-but an example start for anyone to try their hands at it.
+I've also included a not too bad layman's malloc implementation.
 
 Note:
 Before compiling, if using my makefiles, source the 'env.sh' file first.
