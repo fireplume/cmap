@@ -73,8 +73,12 @@ static unsigned int freedMem = 0;
 // Node:    When allocations are done, they are registered into a
 //          (memory) node which itself belongs to a bucket.
 
-// This should be a power of 2.
+// This should be a power of 2 as its log2 is used to calculate the min
+// bucket size.
 #define MAX_ALLOC_PER_NODE 128
+// This should be a multiple of MAX_ALLOC_PER_NODE as it wouldn't make
+// much sense to potentially free a partially used node.
+#define FREED_POINTERS_BUFFER_SIZE (2*MAX_ALLOC_PER_NODE)
 /*********************************************************************/
 // Following is initialized in number of system pages, will get set with
 // byte values at run time.
@@ -124,15 +128,13 @@ typedef struct heap_t {
     unsigned bucketSel;
     memnode_t* bufNode;
     size_t bufSize;
-    char* freeBuffer[MAX_ALLOC_PER_NODE];
+    char* freeBuffer[FREED_POINTERS_BUFFER_SIZE];
     unsigned short freeBufferIndex;
 } heap_t;
 
 
 // Our heap container
 static heap_t* heap = NULL;
-
-void malloc_dump();
 
 
 // Memory node linked list compare function. It is used
@@ -320,7 +322,7 @@ void free(void* ptr) {
     pthread_mutex_lock(&heap->mutex);
 
     // Buffer free pointers until ready to clean up
-    if(heap->freeBufferIndex < MAX_ALLOC_PER_NODE-1) {
+    if(heap->freeBufferIndex < FREED_POINTERS_BUFFER_SIZE-1) {
         heap->freeBuffer[heap->freeBufferIndex++] = ptr;
         pthread_mutex_unlock(&heap->mutex);
         return;
@@ -332,8 +334,8 @@ void free(void* ptr) {
     {
         register void* tmp;
         register int i;
-        for(i=0; i<MAX_ALLOC_PER_NODE; i++) {
-            for(j=i+1; j<MAX_ALLOC_PER_NODE; j++) {
+        for(i=0; i<FREED_POINTERS_BUFFER_SIZE; i++) {
+            for(j=i+1; j<FREED_POINTERS_BUFFER_SIZE; j++) {
                 if(heap->freeBuffer[j] < heap->freeBuffer[i]) {
                     tmp = heap->freeBuffer[j];
                     heap->freeBuffer[j] = heap->freeBuffer[i];
@@ -351,7 +353,7 @@ void free(void* ptr) {
     for(heap->bucketSel=0; heap->bucketSel<NB_BUCKETS; heap->bucketSel++) {
         ll_reset_iterator(&heap->bucketNodes[heap->bucketSel]);
         while( ( node = (memnode_t*)ll_iter(&heap->bucketNodes[heap->bucketSel]) ) != NULL ) {
-            for(k=0; k<MAX_ALLOC_PER_NODE; k++) {
+            for(k=0; k<FREED_POINTERS_BUFFER_SIZE; k++) {
                 if(heap->freeBuffer[k] >= node->nextAlloc || heap->freeBuffer[k] < node->addr) {
                     continue;
                 }
@@ -378,7 +380,7 @@ void free(void* ptr) {
                 munmap(node, (node->size+sizeof(memnode_t)));
             }
 
-            if(heap->freeBufferIndex == MAX_ALLOC_PER_NODE) {
+            if(heap->freeBufferIndex == FREED_POINTERS_BUFFER_SIZE) {
                 heap->freeBufferIndex = 0;
                 pthread_mutex_unlock(&heap->mutex);
                 return;
@@ -387,7 +389,7 @@ void free(void* ptr) {
     }
 
 #ifdef QADEBUG
-    for(int i=0; i<MAX_ALLOC_PER_NODE; i++) {
+    for(int i=0; i<FREED_POINTERS_BUFFER_SIZE; i++) {
         if(heap->freeBuffer[i] != (void*)-1LL) {
             fprintf(stderr, "ERROR: NOT FREED: %p\n", heap->freeBuffer[i]);
         }
